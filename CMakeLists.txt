@@ -3,20 +3,19 @@
 #  http://code.google.com/p/suitesparse-metis-for-windows/
 # Created by Jose Luis Blanco (University of Almeria) 2013-2014
 # Updated by jesnault (jerome.esnault@inria.fr) 2014-01-21
+# Changes Francois Jourdes (InSimo):
+# - upgraded SuiteSparse to 5.8.1
+# - added exclusive support for intel MKL blas/lapack implementation
+#   ( reommended by SuiteSparse maintainers)
+# 
 # -----------------------------------------------------------------
 
-# Hunter stuff must be included before project()
-option(HUNTER_ENABLED "Enable Hunter package manager support" OFF)
+option(BUILD_SHARED_LIBS "Build shared libraries, otherwise build static ones" ON)
 
 if(NOT ${CMAKE_VERSION} VERSION_LESS "3.12.0")
   cmake_policy(SET CMP0074 NEW) # Use PKG_ROOT variables.
 endif()
 
-include(cmake/HunterGate.cmake)
-HunterGate(
-    URL "https://github.com/cpp-pm/hunter/archive/v0.23.244.tar.gz"
-    SHA1 "2c0f491fd0b80f7b09e3d21adb97237161ef9835"
-)
 project(SuiteSparseProject)
 
 cmake_minimum_required(VERSION 3.1)
@@ -63,6 +62,8 @@ endif()
 
 ## get CMAKE_INSTALL_BINDIR and CMAKE_INSTALL_LIBDIR
 include(GNUInstallDirs)
+
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
 if(CMAKE_SIZEOF_VOID_P MATCHES "8")
   set(SUITESPARSE_LIB_POSTFIX "64")
@@ -187,17 +188,20 @@ macro(declare_suitesparse_library targetName srcsList headersList)
 		include_directories(${SuiteSparse_GPUQREngine_INCLUDE})
 		include_directories(${SuiteSparse_GPURuntime_INCLUDE})
 		CUDA_ADD_LIBRARY(${targetName} ${srcsList} ${headersList})
-	else(${CUDA_FOUND})
-		add_library(${targetName} ${srcsList} ${headersList})
-	endif(${CUDA_FOUND})
+	else()
+        if(BUILD_SHARED_LIBS)
+            add_library(${targetName} SHARED ${srcsList} ${headersList})
+        else()
+            add_library(${targetName} STATIC ${srcsList} ${headersList})
+        endif()
+	endif()
 	set_target_properties(${targetName} PROPERTIES
 		OUTPUT_NAME ${SP_LIB_PREFIX}${targetName}
 	)
 
-	target_link_libraries(${targetName}
-			 ${dsl_TARGET_PUBLIC_LINK} suitesparseconfig ## suitesparseconfig is used for every projects (embedded into cmake build)
-		 ${dsl_TARGET_PRIVATE_LINK}	## external required libs
-	)
+	target_link_libraries(${targetName} PUBLIC ${dsl_TARGET_PUBLIC_LINK} suitesparseconfig ) ## suitesparseconfig is used for every projects (embedded into cmake build)
+	
+	target_link_libraries(${targetName} PRIVATE ${dsl_TARGET_PRIVATE_LINK} )
 
 	install_suitesparse_project(${targetName} "${headersList}")
 endmacro()
@@ -221,35 +225,13 @@ if(WITH_CUDA)
 	endif(${CUDA_FOUND})
 endif()
 
-hunter_add_package(LAPACK) # only in effect if HUNTER_ENABLED is set
-# prefer LAPACK config file
-if (WIN32)
-  set(LAPACK_DIR "lapack_windows/x64/" CACHE PATH "LAPACK directory" )
-endif()
+set(SuiteSparse_LAPACK_used_CONFIG NO)
 
-find_package(LAPACK CONFIG)
-if (LAPACK_FOUND AND TARGET blas AND TARGET lapack)
-  message(STATUS "found lapack and blas config file. Linking targets lapack and blas")
-  message(STATUS "- LAPACK_CONFIG: ${LAPACK_CONFIG}")
-  set(SuiteSparse_LINKER_LAPACK_BLAS_LIBS lapack blas)
-  # for suitesparse-config file set method used to find LAPACK (and BLAS)
-  set(SuiteSparse_LAPACK_used_CONFIG YES)
-else()
-  # missing config file or targets, try BLAS and LAPACK
-  find_package(BLAS)
-  find_package(LAPACK)
-  if (BLAS_FOUND AND LAPACK_FOUND)
-    message(STATUS "found lapack and blas config file. Linking targets lapack and blas")
-    message(STATUS "- LAPACK_LIBRARIES: ${LAPACK_LIBRARIES}")
-    message(STATUS "- BLAS_LIBRARIES:   ${BLAS_LIBRARIES}")
-    set(SuiteSparse_LINKER_LAPACK_BLAS_LIBS ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
-    # for suitesparse-config file set method used to find LAPACK (and BLAS)
-    set(SuiteSparse_LAPACK_used_CONFIG NO)
-  else () # LAPACK is not found
-    message(FATAL_ERROR "lapack not found")
-  endif()
-endif()
-
+set(MKL_USE_STATIC_LIB TRUE CACHE BOOL "If True use MKL static libraries")
+find_package(MKL REQUIRED)
+message(STATUS "Using lapack and blas from intel MKL")
+set(SuiteSparse_LINKER_LAPACK_BLAS_LIBS ${MKL_LIBRARIES})
+    
 if(BUILD_METIS)
 	set(SuiteSparse_LINKER_METIS_LIBS "metis")
 	## namespaced library target for config
