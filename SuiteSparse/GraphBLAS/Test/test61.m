@@ -1,10 +1,15 @@
 function test61
-%TEST61 performance test of GrB_eMult
+%TEST61 performance test of GrB_eWiseMult
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 % http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
-fprintf ('\n----------------------------- eMult performance tests\n') ;
+fprintf ('\n----------------------------- eWiseMult performance tests\n') ;
+
+[save save_chunk] = nthreads_get ;
+chunk = 4096 ;
+nthreads = feature ('numcores') ;
+nthreads_set (nthreads, chunk) ;
 
 Prob = ssget (2662)
 A = Prob.A ;
@@ -23,7 +28,7 @@ d = nnz (A) / prod (size (A)) ;
     t1 = toc ;
 
     tic
-    C2 = GB_mex_eWiseMult_Matrix (S, [ ], [ ], 'times', A, B, [ ]) ;
+    C2 = GB_mex_Matrix_eWiseMult (S, [ ], [ ], 'times', A, B, [ ]) ;
     t2 = toc ;
 
     fprintf (...
@@ -45,7 +50,7 @@ for d = [0.00001:0.00001:0.0001 0.0002:0.0001: 0.001 0.002:.001:0.01 0.02:0.01:.
     t1 = toc ;
 
     tic
-    C2 = GB_mex_eWiseMult_Matrix (S, [ ], [ ], 'times', A, B, [ ]) ;
+    C2 = GB_mex_Matrix_eWiseMult (S, [ ], [ ], 'times', A, B, [ ]) ;
     t2 = toc ;
 
     fprintf (...
@@ -57,3 +62,4 @@ end
 
 fprintf ('\ntest61: all tests passed\n') ;
 
+nthreads_set (save, save_chunk) ;

@@ -1,5 +1,4 @@
 function [z tol] = GB_user_op (op, x, y)
-%
 %GB_USER_OP apply a complex binary and unary operator
 %
 % MATLAB equivalents of the GraphBLAS user-defined Complex operators.
@@ -12,7 +11,7 @@ function [z tol] = GB_user_op (op, x, y)
 % No typecasting is done for user-defined operators.  x,y,z are either
 % double complex or double
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 % http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 tol = false ;
@@ -28,14 +27,18 @@ switch op
         z = x ;
     case 'second'
         z = y ;
-    case 'min'
-        z = min (x,y,'includenan') ;
-    case 'max'
-        z = max (x,y,'includenan') ;
+    case 'pair'
+        z = GB_spec_ones (size (x), GB_spec_type (x)) ;
+%   case 'min'
+%       z = min (x,y,'includenan') ;
+%   case 'max'
+%       z = max (x,y,'includenan') ;
     case 'plus'
         z = x+y ;
     case 'minus'
         z = x-y ;
+    case 'rminus'
+        z = y-x ;
     case 'times'
         z = x.*y ;
     case 'div'
@@ -46,6 +49,15 @@ switch op
         if (any (isnan (z)))
             z (isnan (z)) = complex (nan,nan) ;
         end
+        tol = true ;
+    case 'rdiv'
+        z = y./x ;
+        if (any (isnan (z)))
+            z (isnan (z)) = complex (nan,nan) ;
+        end
+        tol = true ;
+    case 'pow'
+        z = y.^x ;
         tol = true ;
 
     % x,y,z all complex:
@@ -94,14 +106,13 @@ switch op
 
     % x,z complex
     case 'one'
-        [m n] = size (x) ;
-        z = complex (ones (m,n),0) ;
+        z = GB_spec_ones (size (x), GB_spec_type (x))  ;
     case 'identity'
         z = x ;
     case 'ainv'
         z = -x ;
     case 'abs'
-        z = complex (abs (x), 0) ;
+        z = abs (x) ;
         tol = true ;
     case 'minv'
         z = 1./x ;
@@ -109,8 +120,8 @@ switch op
             z (isnan (z)) = complex (nan,nan) ;
         end
         tol = true ;
-    case 'not'
-        z = complex (double (~(x ~= 0)), 0) ;
+%   case 'not'
+%       z = complex (double (~(x ~= 0)), 0) ;
     case 'conj'
         z = conj (x) ;
 
@@ -119,21 +130,21 @@ switch op
         z = real (x) ;
     case 'imag'
         z = imag (x) ;
-    case 'cabs'
-        z = abs (x) ;
-        tol = true ;
-    case 'angle'
+    case { 'angle', 'carg' }
         z = angle (x) ;
         tol = true ;
 
-    % x real, z complex
-    case 'complex_real'
-        z = complex (x,0) ;
-    case 'complex_imag'
-        z = complex (0,x) ;
+%   case 'abs'
+%       complex (abs (x), 0) ;
+%   case 'cabs'
+%       z = abs (x) ;
+%       tol = true ;
+%   case 'complex_real'
+%       z = complex (x,0) ;
+%   case 'complex_imag'
+%       z = complex (0,x) ;
 
     otherwise
         error ('unrecognized complex operator')
 end
-
 

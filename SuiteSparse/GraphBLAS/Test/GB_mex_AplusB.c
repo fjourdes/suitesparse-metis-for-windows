@@ -2,7 +2,7 @@
 // GB_mex_AplusB: compute C=A+B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 // http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
@@ -59,11 +59,12 @@ void mexFunction
         FREE_ALL ;
         mexErrMsgTxt ("failed") ;
     }
-    mxClassID aclass = GB_mx_Type_to_classID (A->type) ;
 
-    // get op; default: NOP, default class is class(A)
+    // get op
+    bool user_complex = (Complex != GxB_FC64)
+        && (A->type == Complex || B->type == Complex) ;
     if (!GB_mx_mxArray_to_BinaryOp (&op, pargin [2], "op",
-        GB_NOP_opcode, aclass, A->type == Complex, B->type == Complex))
+        A->type, user_complex) || op == NULL)
     {
         FREE_ALL ;
         mexErrMsgTxt ("op failed") ;
@@ -72,13 +73,8 @@ void mexFunction
     // printf ("time so far: %g\n", simple_toc (tic2)) ;
     // simple_tic (tic2) ;
 
-    // C = A+B using the op
-    METHOD (GB_add (&C, A->type, true, A, B, op, Context)) ;
-
-    // GrB_wait ( ) ;
-    // TOC ;
-    // printf ("time method: %g\n", simple_toc (tic2)) ;
-    // simple_tic (tic2) ;
+    // C = A+B using the op.  No mask
+    METHOD (GB_add (&C, A->type, true, NULL, false, A, B, op, Context)) ;
 
     // return C to MATLAB as a plain sparse matrix
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C AplusB result", false) ;

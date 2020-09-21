@@ -7,7 +7,24 @@
 # and GraphBLAS.  The configuration settings for GraphBLAS are determined by
 # GraphBLAS/CMakeLists.txt
 
-SUITESPARSE_VERSION = 5.4.0
+SUITESPARSE_VERSION = 5.8.1
+
+    #---------------------------------------------------------------------------
+    # determine what system we are on
+    #---------------------------------------------------------------------------
+
+    # To disable these auto configurations, use 'make UNAME=custom'
+
+    ifndef UNAME
+        ifeq ($(OS),Windows_NT)
+            # Cygwin Make on Windows has an $(OS) variable, but not uname.
+            # Note that this option is untested.
+            UNAME = Windows
+        else
+            # Linux and Darwin (Mac OSX) have been tested.
+            UNAME := $(shell uname)
+        endif
+    endif
 
 #===============================================================================
 # Options you can change without editing this file:
@@ -59,14 +76,14 @@ SUITESPARSE_VERSION = 5.4.0
     INSTALL_INCLUDE ?= $(INSTALL)/include
     INSTALL_DOC ?= $(INSTALL)/share/doc/suitesparse-$(SUITESPARSE_VERSION)
 
-    CMAKE_OPTIONS ?= -DCMAKE_INSTALL_PREFIX=$(INSTALL)
-
     #---------------------------------------------------------------------------
     # parallel make
     #---------------------------------------------------------------------------
 
-    # sequential make's by default
-    JOBS ?= 1
+    # use 8 jobs by default
+    JOBS ?= 8
+
+    CMAKE_OPTIONS ?= -DCMAKE_INSTALL_PREFIX=$(INSTALL)
 
     #---------------------------------------------------------------------------
     # optimization level
@@ -83,12 +100,12 @@ SUITESPARSE_VERSION = 5.4.0
         # statement coverage.  The Tcov tests require Linux and gcc, and use
         # the vanilla BLAS.  For those tests, the packages use 'make TCOV=yes',
         # which overrides the following settings:
-        MKLROOT =
+        # MKLROOT =
         AUTOCC = no
         CC = gcc
         CXX = g++
-        BLAS = -lrefblas -lgfortran -lstdc++
-        LAPACK = -llapack
+        # BLAS = -lrefblas -lgfortran -lstdc++
+        # LAPACK = -llapack
         CFLAGS += --coverage
         OPTIMIZATION = -g
         LDFLAGS += --coverage
@@ -106,11 +123,12 @@ SUITESPARSE_VERSION = 5.4.0
     # compiler
     #---------------------------------------------------------------------------
 
-    # By default, look for the Intel compilers.  If present, they are used
-    # instead of $(CC), $(CXX), and $(F77).  To disable this feature and
+    # If AUTOCCC is yes, look for the Intel compilers.  If present, they are
+    # used instead of $(CC), $(CXX), and $(F77).  To disable this feature and
     # use the $(CC), $(CXX), and $(F77) compilers, use 'make AUTOCC=no'
 
-    AUTOCC ?= yes
+    # AUTOCC ?= yes
+    AUTOCC ?= no
 
     ifneq ($(AUTOCC),no)
         ifneq ($(shell which icc 2>/dev/null),)
@@ -154,13 +172,9 @@ SUITESPARSE_VERSION = 5.4.0
     LDLIBS ?= -lm
     LDFLAGS += -L$(INSTALL_LIB)
 
-    # See http://www.openblas.net for a recent and freely available optimzed
-    # BLAS.  LAPACK is at http://www.netlib.org/lapack/ .  You can use the
-    # standard Fortran LAPACK along with OpenBLAS to obtain very good
-    # performance.  This script can also detect if the Intel MKL BLAS is
-    # installed.
-
-    LAPACK ?= -llapack
+    # NOTE: Use of the Intel MKL BLAS is strongly recommended.  The OpenBLAS can
+    # result in severe performance degradation, in CHOLMOD in particular.
+    # This script can also detect if the Intel MKL BLAS is installed.
 
     ifndef BLAS
         ifdef MKLROOT
@@ -172,11 +186,13 @@ SUITESPARSE_VERSION = 5.4.0
             #   $(MKLROOT)/lib/intel64/libmkl_intel_thread.a \
             #   -Wl,--end-group -lpthread -lm
             # using dynamic linking:
-            BLAS = -lmkl_intel_lp64 -lmkl_core -lmkl_intel_thread -liomp5 -lpthread -lm
-            LAPACK =
+            ifeq ($(UNAME),Linux)
+                BLAS ?= -lmkl_intel_lp64 -lmkl_core -lmkl_intel_thread -liomp5 -lpthread -lm
+                LAPACK ?=
+            endif
         else
-            # use the OpenBLAS at http://www.openblas.net
-            BLAS = -lopenblas
+            BLAS ?= -lblas
+            LAPACK ?= -llapack
         endif
     endif
 
@@ -209,6 +225,7 @@ SUITESPARSE_VERSION = 5.4.0
 
     # CUDA is detected automatically, and used if found.  To disable CUDA,
     # use CUDA=no
+    CUDA = auto
 
     ifneq ($(CUDA),no)
         CUDA_PATH = $(shell which nvcc 2>/dev/null | sed "s/\/bin\/nvcc//")
@@ -336,23 +353,6 @@ SUITESPARSE_VERSION = 5.4.0
 #===============================================================================
 
     #---------------------------------------------------------------------------
-    # determine what system we are on
-    #---------------------------------------------------------------------------
-
-    # To disable these auto configurations, use 'make UNAME=custom'
-
-    ifndef UNAME
-        ifeq ($(OS),Windows_NT)
-            # Cygwin Make on Windows has an $(OS) variable, but not uname.
-            # Note that this option is untested.
-            UNAME = Windows
-        else
-            # Linux and Darwin (Mac OSX) have been tested.
-            UNAME := $(shell uname)
-        endif
-    endif
-
-    #---------------------------------------------------------------------------
     # Linux
     #---------------------------------------------------------------------------
 
@@ -370,10 +370,11 @@ SUITESPARSE_VERSION = 5.4.0
         # command line in the Terminal, before doing 'make':
         # xcode-select --install
         CF += -fno-common
-        BLAS = -framework Accelerate
-        LAPACK = -framework Accelerate
+        BLAS ?= -framework Accelerate
+        LAPACK ?= -framework Accelerate
         # OpenMP is not yet supported by default in clang
         CFOPENMP =
+        LDLIBS += -rpath $(INSTALL_LIB)
     endif
 
     #---------------------------------------------------------------------------
@@ -386,8 +387,8 @@ SUITESPARSE_VERSION = 5.4.0
         # I leave it here in case you need it.  It likely needs updating.
         CF += -fast -KPIC -xc99=%none -xlibmieee -xlibmil -m64 -Xc
         F77FLAGS = -O -fast -KPIC -dalign -xlibmil -m64
-        BLAS = -xlic_lib=sunperf
-        LAPACK =
+        BLAS ?= -xlic_lib=sunperf
+        LAPACK ?=
         # Using the GCC compiler and the reference BLAS
         ## CC = gcc
         ## CXX = g++
@@ -404,9 +405,9 @@ SUITESPARSE_VERSION = 5.4.0
         # hasn't been tested for a very long time...
         # I leave it here in case you need it.  It likely needs updating.
         CF += -O4 -qipa -qmaxmem=16384 -q64 -qproto -DBLAS_NO_UNDERSCORE
-        F77FLAGS =  -O4 -qipa -qmaxmem=16384 -q64
-        BLAS = -lessl
-        LAPACK =
+        F77FLAGS ?=  -O4 -qipa -qmaxmem=16384 -q64
+        BLAS ?= -lessl
+        LAPACK ?=
     endif
 
 #===============================================================================
@@ -463,6 +464,7 @@ else
         SO_TARGET = $(LIBRARY).$(VERSION).dylib
         SO_OPTS  += -dynamiclib -compatibility_version $(SO_VERSION) \
                     -current_version $(VERSION) \
+                    -Wl,-install_name -Wl,@rpath/$(SO_MAIN) \
                     -shared -undefined dynamic_lookup
         # When a Mac *.dylib file is moved, this command is required
         # to change its internal name to match its location in the filesystem:
@@ -615,6 +617,8 @@ config:
 	@echo 'CHOLMOD Partition config: ' '$(CONFIG_PARTITION)'
 	@echo 'CHOLMOD Partition libs:   ' '$(LIB_WITH_PARTITION)'
 	@echo 'CHOLMOD Partition include:' '$(I_WITH_PARTITION)'
+	@echo 'MAKE: ' '$(MAKE)'
+	@echo 'CMake options: ' '$(CMAKE_OPTIONS)'
 ifeq ($(TCOV),yes)
 	@echo 'TCOV=yes, for extensive testing only (gcc, g++, vanilla BLAS)'
 endif

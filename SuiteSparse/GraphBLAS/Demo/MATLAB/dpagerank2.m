@@ -1,5 +1,5 @@
 function [r,irank,iters] = dpagerank2 (A, tol, itermax)
-%DPAGERANK compute the pagerank of nodes in a graph using a real semiring
+%DPAGERANK2 compute the pagerank of nodes in a graph using a real semiring
 % Usage:
 % [r,irank,iters] = dpagerank2 (A) ;
 %
@@ -20,6 +20,9 @@ function [r,irank,iters] = dpagerank2 (A, tol, itermax)
 % max number of iterations allows.
 %
 % See also ipagerank.
+
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
+% http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 if (nargin < 2)
     tol = 1e-5 ;        % stopping criterion
@@ -51,3 +54,4 @@ r = r / sum (r) ;       % normalize r so sum(r)==1
 
 % sort the nodes by pagerank
 [r,irank] = sort (r, 'descend') ;
+

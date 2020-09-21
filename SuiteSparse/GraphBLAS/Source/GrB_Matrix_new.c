@@ -2,7 +2,7 @@
 // GrB_Matrix_new: create a new matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 // http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,7 @@
 GrB_Info GrB_Matrix_new     // create a new matrix with no entries
 (
     GrB_Matrix *A,          // handle of matrix to create
-    const GrB_Type type,    // type of matrix to create
+    GrB_Type type,          // type of matrix to create
     GrB_Index nrows,        // matrix dimension is nrows-by-ncols
     GrB_Index ncols
 )
@@ -32,20 +32,20 @@ GrB_Info GrB_Matrix_new     // create a new matrix with no entries
     (*A) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
 
-    if (nrows > GB_INDEX_MAX)
+    if (nrows > GxB_INDEX_MAX)
     { 
         // problem too large
         return (GB_ERROR (GrB_INVALID_VALUE, (GB_LOG,
-            "problem too large: nrows "GBu" exceeds "GBu,
-            nrows, GB_INDEX_MAX))) ;
+            "problem too large: nrows " GBu " exceeds " GBu,
+            nrows, GxB_INDEX_MAX))) ;
     }
 
-    if (ncols > GB_INDEX_MAX)
+    if (ncols > GxB_INDEX_MAX)
     { 
         // problem too large
         return (GB_ERROR (GrB_INVALID_VALUE, (GB_LOG,
-            "problem too large: ncols "GBu" exceeds "GBu,
-            ncols, GB_INDEX_MAX))) ;
+            "problem too large: ncols " GBu " exceeds " GBu,
+            ncols, GxB_INDEX_MAX))) ;
     }
 
     //--------------------------------------------------------------------------
@@ -58,7 +58,7 @@ GrB_Info GrB_Matrix_new     // create a new matrix with no entries
     // A is created with auto hypersparsity (typically hypersparse unless
     // vdim <= 1 or hyper_ratio < 0) and default CSR/CSC format.
 
-    bool A_is_csc = GB_Global.is_csc ;
+    bool A_is_csc = GB_Global_is_csc_get ( ) ;
 
     if (A_is_csc)
     { 
@@ -72,8 +72,8 @@ GrB_Info GrB_Matrix_new     // create a new matrix with no entries
     }
 
     // *A == NULL ;                 // allocate a new header for A
-    GB_NEW (A, type, vlen, vdim, GB_Ap_calloc, A_is_csc,
-        GB_AUTO_HYPER, GB_HYPER_DEFAULT, 1) ;
+    info = GB_new (A, type, vlen, vdim, GB_Ap_calloc, A_is_csc,
+        GB_AUTO_HYPER, GB_HYPER_DEFAULT, 1, Context) ;
     return (info) ;
 }
 

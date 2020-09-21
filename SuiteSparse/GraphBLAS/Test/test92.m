@@ -1,5 +1,10 @@
 function test92
-%TEST92 test GB_subref_symbolic
+%TEST92 test GB_subref (symbolic case)
+
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
+% http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
+
+fprintf ('test92:  test GB_subref (symbolic case)\n') ;
 
 rng ('default') ;
 n = 100 ;

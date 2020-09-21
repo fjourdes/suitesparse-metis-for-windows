@@ -2,8 +2,11 @@
 ../build/wildtype_demo                         > wildtype_demo.out
 ../build/simple_demo                           > simple_demo.out
 ../build/complex_demo                          > complex_demo_out.m
+../build/complex_demo 1                        > complex_demo_out2.m
 ../build/pthread_demo                          > pthread_demo.out
 ../build/openmp_demo                           > openmp_demo.out
+
+../build/import_demo   < Matrix/west0067            > import_demo.out
 
 ../build/pagerank_demo < Matrix/eye3                > pagerank_demo.out
 ../build/pagerank_demo < Matrix/2blocks            >> pagerank_demo.out
@@ -81,7 +84,10 @@ diff -I time Output/complex_demo_out.m    complex_demo_out.m
 diff -I time Output/wildtype_demo.out     wildtype_demo.out
 diff -I time Output/bfs_demo.out          bfs_demo.out
 diff -I time Output/mis_demo.out          mis_demo.out
-diff -I time -I rate -I usage Output/tri_demo.out tri_demo.out
+
+grep -v time Output/tri_demo.out | grep -v rate > t1.out
+grep -v time tri_demo.out        | grep -v rate > t2.out
+diff t1.out t2.out
 
 echo "Comparing PageRank results:"
 diff -I time -I " d:" Output/pagerank_demo.out     pagerank_demo.out

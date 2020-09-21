@@ -2,7 +2,7 @@
 // GB_ix_alloc: allocate a matrix to hold a given number of entries
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 // http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
@@ -16,6 +16,7 @@
 
 #include "GB.h"
 
+GB_PUBLIC   // accessed by the MATLAB tests in GraphBLAS/Test only
 GrB_Info GB_ix_alloc        // allocate A->i and A->x space in a matrix
 (
     GrB_Matrix A,           // matrix to allocate space for
@@ -29,19 +30,13 @@ GrB_Info GB_ix_alloc        // allocate A->i and A->x space in a matrix
     // check inputs
     //--------------------------------------------------------------------------
 
-    // GB_new does not always initialize A->p; GB_check fails in this case.  So
-    // the following assertion is not possible here.  This is by design.
-    // Thus, ASSERT_OK (GB_check (A, "A", ...)) ;  cannot be used here.
-    ASSERT (A != NULL && A->p != NULL) ;
-    ASSERT ((!(A->is_hyper) || A->h != NULL)) ;
+    // GB_new does not always initialize or even allocate A->p
+    ASSERT (A != NULL) ;
 
-    double memory = GBYTES (nzmax,
-        sizeof (int64_t) + (numeric ? A->type->size : 0)) ;
-
-    if (nzmax > GB_INDEX_MAX)
+    if (nzmax > GxB_INDEX_MAX)
     { 
         // problem too large
-        return (GB_OUT_OF_MEMORY (memory)) ;
+        return (GB_OUT_OF_MEMORY) ;
     }
 
     //--------------------------------------------------------------------------
@@ -54,17 +49,17 @@ GrB_Info GB_ix_alloc        // allocate A->i and A->x space in a matrix
 
     // allocate the new A->x and A->i content
     A->nzmax = GB_IMAX (nzmax, 1) ;
-    GB_MALLOC_MEMORY (A->i, A->nzmax, sizeof (int64_t)) ;
+    A->i = GB_MALLOC (A->nzmax, int64_t) ;
     if (numeric)
     { 
-        GB_MALLOC_MEMORY (A->x, A->nzmax, A->type->size) ;
+        A->x = GB_MALLOC (A->nzmax * A->type->size, GB_void) ;
     }
 
     if (A->i == NULL || (numeric && A->x == NULL))
     { 
         // out of memory
-        GB_CONTENT_FREE (A) ;
-        return (GB_OUT_OF_MEMORY (memory)) ;
+        GB_PHIX_FREE (A) ;
+        return (GB_OUT_OF_MEMORY) ;
     }
 
     return (GrB_SUCCESS) ;

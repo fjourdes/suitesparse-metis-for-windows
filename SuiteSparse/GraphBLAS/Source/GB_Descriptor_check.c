@@ -2,7 +2,7 @@
 // GB_Descriptor_check: check and print a Descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 // http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
@@ -10,16 +10,16 @@
 #include "GB.h"
 
 //------------------------------------------------------------------------------
-// dcheck: check a single descriptor field
+// GB_dc: check a single descriptor field
 //------------------------------------------------------------------------------
 
-static GrB_Info dcheck
+static GrB_Info GB_dc
 (
-    bool spec,
+    int kind,                           // 0, 1, or 2
     const char *field,
     const GrB_Desc_Value v,
-    const GrB_Desc_Value nondefault,
-    int pr,
+    const GrB_Desc_Value nondefault,    // for kind == 0
+    int pr,                             // print level
     FILE *f,
     GB_Context Context
 )
@@ -28,26 +28,30 @@ static GrB_Info dcheck
     bool ok = true ;
     GrB_Info info = GrB_SUCCESS ;
 
-    if (pr > 0) GBPR ("D.%s = ", field) ;
-    switch (v)
+    GBPR0 ("    d.%s = ", field) ;
+    switch ((int) v)
     {
-        case GxB_DEFAULT       : if (pr > 0) GBPR ("default   ") ; break ;
-        case GrB_SCMP          : if (pr > 0) GBPR ("scmp      ") ; break ;
-        case GrB_TRAN          : if (pr > 0) GBPR ("tran      ") ; break ;
-        case GrB_REPLACE       : if (pr > 0) GBPR ("replace   ") ; break ;
-        case GxB_AxB_GUSTAVSON : if (pr > 0) GBPR ("Gustavson ") ; break ;
-        case GxB_AxB_HEAP      : if (pr > 0) GBPR ("heap      ") ; break ;
-        case GxB_AxB_DOT       : if (pr > 0) GBPR ("dot       ") ; break ;
-        default                : if (pr > 0) GBPR ("unknown   ") ;
+        case GxB_DEFAULT            : GBPR0 ("default   ") ; break ;
+        case GrB_COMP               : GBPR0 ("complement") ; break ;
+        case GrB_STRUCTURE          : GBPR0 ("structure ") ; break ;
+        case GrB_COMP+GrB_STRUCTURE : GBPR0 ("structural complement") ; break ;
+        case GrB_TRAN               : GBPR0 ("transpose ") ; break ;
+        case GrB_REPLACE            : GBPR0 ("replace   ") ; break ;
+        case GxB_AxB_SAXPY          : GBPR0 ("saxpy     ") ; break ;
+        case GxB_AxB_GUSTAVSON      : GBPR0 ("Gustavson ") ; break ;
+        case GxB_AxB_HEAP           : GBPR0 ("heap      ") ; break ;
+        case GxB_AxB_HASH           : GBPR0 ("hash      ") ; break ;
+        case GxB_AxB_DOT            : GBPR0 ("dot       ") ; break ;
+        default                     : GBPR0 ("unknown   ") ;
             info = GrB_INVALID_OBJECT ;
             ok = false ;
             break ;
     }
 
     if (ok)
-    { 
-        if (spec)
-        { 
+    {
+        if (kind == 0)
+        {
             // descriptor field can be set to the default,
             // or one non-default value
             if (! (v == GxB_DEFAULT || v == nondefault))
@@ -55,11 +59,21 @@ static GrB_Info dcheck
                 ok = false ;
             }
         }
-        else
-        { 
+        else if (kind == 1)
+        {
+            // mask
+            if (! (v == GxB_DEFAULT || v == GrB_COMP || v == GrB_STRUCTURE ||
+                   v == (GrB_COMP + GrB_STRUCTURE)))
+            {
+                ok = false ;
+            }
+        }
+        else // kind == 2
+        {
             // GxB_AxB_METHOD:
             if (! (v == GxB_DEFAULT || v == GxB_AxB_GUSTAVSON
-                || v == GxB_AxB_HEAP || v == GxB_AxB_DOT))
+                || v == GxB_AxB_HEAP || v == GxB_AxB_DOT
+                || v == GxB_AxB_HASH || v == GxB_AxB_SAXPY))
             { 
                 ok = false ;
             }
@@ -68,11 +82,11 @@ static GrB_Info dcheck
 
     if (!ok)
     { 
-        if (pr > 0) GBPR (" (invalid value for this field)") ;
+        GBPR0 (" (invalid value for this field)") ;
         info = GrB_INVALID_OBJECT ;
     }
 
-    if (pr > 0) GBPR ("\n") ;
+    GBPR0 ("\n") ;
 
     return (info) ;
 }
@@ -81,27 +95,27 @@ static GrB_Info dcheck
 // GB_Descriptor_check
 //------------------------------------------------------------------------------
 
+GB_PUBLIC   // accessed by the MATLAB tests in GraphBLAS/Test only
 GrB_Info GB_Descriptor_check    // check a GraphBLAS descriptor
 (
     const GrB_Descriptor D,     // GraphBLAS descriptor to print and check
     const char *name,           // name of the descriptor, optional
-    int pr,                     // 0: print nothing, 1: print header and
-                                // errors, 2: print brief, 3: print all
+    int pr,                     // print level
     FILE *f,                    // file for output
     GB_Context Context
 )
-{ 
+{
 
     //--------------------------------------------------------------------------
     // check inputs
     //--------------------------------------------------------------------------
 
-    if (pr > 0) GBPR ("\nGraphBLAS Descriptor: %s ", GB_NAME) ;
+    GBPR0 ("\n    GraphBLAS Descriptor: %s ", GB_NAME) ;
 
     if (D == NULL)
     { 
         // GrB_error status not modified since this may be an optional argument
-        if (pr > 0) GBPR ("NULL\n") ;
+        GBPR0 ("NULL\n") ;
         return (GrB_NULL_POINTER) ;
     }
 
@@ -111,23 +125,50 @@ GrB_Info GB_Descriptor_check    // check a GraphBLAS descriptor
 
     GB_CHECK_MAGIC (D, "Descriptor") ;
 
-    if (pr > 0) GBPR ("\n") ;
+    GBPR0 ("\n") ;
 
     GrB_Info info [5] ;
-    info [0] = dcheck (true,  "output    ", D->out,  GrB_REPLACE, pr,f,Context);
-    info [1] = dcheck (true,  "mask      ", D->mask, GrB_SCMP,    pr,f,Context);
-    info [2] = dcheck (true,  "input0    ", D->in0,  GrB_TRAN,    pr,f,Context);
-    info [3] = dcheck (true,  "input1    ", D->in1,  GrB_TRAN,    pr,f,Context);
-    info [4] = dcheck (false, "AxB_method", D->axb,  0,           pr,f,Context);
+    info [0] = GB_dc (0, "out     ", D->out,  GrB_REPLACE, pr, f, Context) ;
+    info [1] = GB_dc (1, "mask    ", D->mask, GxB_DEFAULT, pr, f, Context) ;
+    info [2] = GB_dc (0, "in0     ", D->in0,  GrB_TRAN,    pr, f, Context) ;
+    info [3] = GB_dc (0, "in1     ", D->in1,  GrB_TRAN,    pr, f, Context) ;
+    info [4] = GB_dc (2, "axb     ", D->axb,  GxB_DEFAULT, pr, f, Context) ;
 
     for (int i = 0 ; i < 5 ; i++)
-    { 
+    {
         if (info [i] != GrB_SUCCESS)
-        {
-            if (pr > 0) GBPR ("Descriptor field set to an invalid value\n") ;
+        { 
+            GBPR0 ("    Descriptor field set to an invalid value\n") ;
             return (GB_ERROR (GrB_INVALID_OBJECT, (GB_LOG,
                 "Descriptor field set to an invalid value: [%s]", GB_NAME))) ;
         }
+    }
+
+    int nthreads_max = D->nthreads_max ;
+    double chunk = D->chunk ;
+
+    GBPR0 ("    d.nthreads = ") ;
+    if (nthreads_max <= GxB_DEFAULT)
+    { 
+        GBPR0 ("default\n") ;
+    }
+    else
+    { 
+        GBPR0 ("%d\n", nthreads_max) ;
+    }
+    GBPR0 ("    d.chunk    = ") ;
+    if (chunk <= GxB_DEFAULT)
+    { 
+        GBPR0 ("default\n") ;
+    }
+    else
+    { 
+        GBPR0 ("%g\n", chunk) ;
+    }
+
+    if (D->use_mkl)
+    {
+        GBPR0 ("    d.use_mkl = true") ;
     }
 
     return (GrB_SUCCESS) ;

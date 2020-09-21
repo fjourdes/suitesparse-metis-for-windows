@@ -1,278 +1,308 @@
 
-
-
 //------------------------------------------------------------------------------
-// GB_AxB:  hard-coded C=A*B and C<M>=A*B
+// GB_AxB:  hard-coded functions for semiring: C<M>=A*B or A'*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 // http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
-// If this filename has a double underscore in its name ("__") then it has been
-// automatically constructed from Generator/GB_AxB.c, via the Source/axb*.m
-// scripts, and should not be editted.  Edit the original source file instead.
-
 //------------------------------------------------------------------------------
+
+// If this file is in the Generated/ folder, do not edit it (auto-generated).
 
 #include "GB.h"
 #ifndef GBCOMPACT
-#include "GB_heap.h"
-#include "GB_AxB__semirings.h"
+#include "GB_control.h"
+#include "GB_ek_slice.h"
+#include "GB_bracket.h"
+#include "GB_sort.h"
+#include "GB_atomics.h"
+#include "GB_AxB_saxpy3.h"
+#include "GB_AxB__include.h"
 
 // The C=A*B semiring is defined by the following types and operators:
 
-// A*B function (Gustavon):  GB_AgusB__times_max_fp64
-// A'*B function (dot):      GB_AdotB__times_max_fp64
-// A*B function (heap):      GB_AheapB__times_max_fp64
-// Z type:   double (the type of C)
-// X type:   double (the type of x for z=mult(x,y))
-// Y type:   double (the type of y for z=mult(x,y))
-// handle flipxy: 0 (0 if mult(x,y) is commutative, 1 otherwise)
-// Identity: 1 (where cij *= identity does not change cij)
-// Multiply: z = GB_FMAX(x,y)
+// A'*B function (dot2):     GB_Adot2B__times_max_fp64
+// A'*B function (dot3):     GB_Adot3B__times_max_fp64
+// C+=A'*B function (dot4):  GB_Adot4B__times_max_fp64
+// A*B function (saxpy3):    GB_Asaxpy3B__times_max_fp64
+
+// C type:   double
+// A type:   double
+// B type:   double
+
+// Multiply: z = fmax (aik, bkj)
 // Add:      cij *= z
+//           'any' monoid?  0
+//           atomic?        1
+//           OpenMP atomic? 1
+// MultAdd:  cij *= fmax (aik, bkj)
+// Identity: 1
+// Terminal: ;
 
-#define GB_XTYPE \
+#define GB_ATYPE \
     double
-#define GB_YTYPE \
+
+#define GB_BTYPE \
     double
-#define GB_HANDLE_FLIPXY \
-    0
 
-#define GB_MULTOP(z,x,y) \
-    z = GB_FMAX(x,y)
+#define GB_CTYPE \
+    double
 
-//------------------------------------------------------------------------------
-// C<M>=A*B and C=A*B: gather/scatter saxpy-based method (Gustavson)
-//------------------------------------------------------------------------------
+// true for int64, uint64, float, double, float complex, and double complex 
+#define GB_CTYPE_IGNORE_OVERFLOW \
+    1
 
+// aik = Ax [pA]
+#define GB_GETA(aik,Ax,pA) \
+    double aik = Ax [pA]
+
+// bkj = Bx [pB]
+#define GB_GETB(bkj,Bx,pB) \
+    double bkj = Bx [pB]
+
+#define GB_CX(p) Cx [p]
+
+// multiply operator
+#define GB_MULT(z, x, y) \
+    z = fmax (x, y)
+
+// cast from a real scalar (or 2, if C is complex) to the type of C
+#define GB_CTYPE_CAST(x,y) \
+    ((double) x)
+
+// multiply-add
+#define GB_MULTADD(z, x, y) \
+    z *= fmax (x, y)
+
+// monoid identity value
 #define GB_IDENTITY \
     1
 
-// x [i] = y
-#define GB_COPY_SCALAR_TO_ARRAY(x,i,y,s)                \
-    x [i] = y ;
+// break if cij reaches the terminal value (dot product only)
+#define GB_DOT_TERMINAL(cij) \
+    ;
 
-// x = y [i]
-#define GB_COPY_ARRAY_TO_SCALAR(x,y,i,s)                \
-    GB_btype x = y [i] ;
+// simd pragma for dot-product loop vectorization
+#define GB_PRAGMA_SIMD_DOT(cij) \
+    GB_PRAGMA_SIMD_REDUCTION (*,cij)
 
-// x [i] = y [i]
-#define GB_COPY_ARRAY_TO_ARRAY(x,i,y,j,s)               \
-    x [i] = y [j] ;
+// simd pragma for other loop vectorization
+#define GB_PRAGMA_SIMD_VECTORIZE GB_PRAGMA_SIMD
 
-// mult-add operation (no mask)
-#define GB_MULTADD_NOMASK                               \
-{                                                       \
-    /* Sauna_Work [i] += A(i,k) * B(k,j) */             \
-    GB_atype aik = Ax [pA] ;                            \
-    double t ;                                        \
-    GB_MULTIPLY (t, aik, bkj) ;                         \
-    Sauna_Work [i] *= t ;                         \
-}
+// 1 for the PLUS_PAIR_(real) semirings, not for the complex case
+#define GB_IS_PLUS_PAIR_REAL_SEMIRING \
+    0
 
-// mult-add operation (with mask)
-#define GB_MULTADD_WITH_MASK                            \
-{                                                       \
-    /* Sauna_Work [i] += A(i,k) * B(k,j) */             \
-    GB_atype aik = Ax [pA] ;                            \
-    double t ;                                        \
-    GB_MULTIPLY (t, aik, bkj) ;                         \
-    if (mark == hiwater)                                \
-    {                                                   \
-        /* first time C(i,j) seen */                    \
-        Sauna_Mark [i] = hiwater + 1 ;                  \
-        Sauna_Work [i] = t ;                            \
-    }                                                   \
-    else                                                \
-    {                                                   \
-        /* C(i,j) seen before, update it */             \
-        Sauna_Work [i] *= t ;                     \
-    }                                                   \
-}
+// declare the cij scalar
+#if GB_IS_PLUS_PAIR_REAL_SEMIRING
+    // also initialize cij to zero
+    #define GB_CIJ_DECLARE(cij) \
+        double cij = 0
+#else
+    // all other semirings: just declare cij, do not initialize it
+    #define GB_CIJ_DECLARE(cij) \
+        double cij
+#endif
 
-GrB_Info GB_AgusB__times_max_fp64
+// save the value of C(i,j)
+#define GB_CIJ_SAVE(cij,p) Cx [p] = cij
+
+// cij = Cx [pC]
+#define GB_GETC(cij,pC) \
+    cij = Cx [pC]
+
+// Cx [pC] = cij
+#define GB_PUTC(cij,pC) \
+    Cx [pC] = cij
+
+// Cx [p] = t
+#define GB_CIJ_WRITE(p,t) Cx [p] = t
+
+// C(i,j) += t
+#define GB_CIJ_UPDATE(p,t) \
+    Cx [p] *= t
+
+// x + y
+#define GB_ADD_FUNCTION(x,y) \
+    x * y
+
+// type with size of GB_CTYPE, and can be used in compare-and-swap
+#define GB_CTYPE_PUN \
+    uint64_t
+
+// bit pattern for bool, 8-bit, 16-bit, and 32-bit integers
+#define GB_CTYPE_BITS \
+    0
+
+// 1 if monoid update can skipped entirely (the ANY monoid)
+#define GB_IS_ANY_MONOID \
+    0
+
+// 1 if monoid update is EQ
+#define GB_IS_EQ_MONOID \
+    0
+
+// 1 if monoid update can be done atomically, 0 otherwise
+#define GB_HAS_ATOMIC \
+    1
+
+// 1 if monoid update can be done with an OpenMP atomic update, 0 otherwise
+#if GB_MICROSOFT
+    #define GB_HAS_OMP_ATOMIC \
+        1
+#else
+    #define GB_HAS_OMP_ATOMIC \
+        1
+#endif
+
+// 1 for the ANY_PAIR semirings
+#define GB_IS_ANY_PAIR_SEMIRING \
+    0
+
+// 1 if PAIR is the multiply operator 
+#define GB_IS_PAIR_MULTIPLIER \
+    0
+
+// 1 if monoid is PLUS_FC32
+#define GB_IS_PLUS_FC32_MONOID \
+    0
+
+// 1 if monoid is PLUS_FC64
+#define GB_IS_PLUS_FC64_MONOID \
+    0
+
+// atomic compare-exchange
+#define GB_ATOMIC_COMPARE_EXCHANGE(target, expected, desired) \
+    GB_ATOMIC_COMPARE_EXCHANGE_64 (target, expected, desired)
+
+#if GB_IS_ANY_PAIR_SEMIRING
+
+    // result is purely symbolic; no numeric work to do.  Hx is not used.
+    #define GB_HX_WRITE(i,t)
+    #define GB_CIJ_GATHER(p,i)
+    #define GB_HX_UPDATE(i,t)
+    #define GB_CIJ_MEMCPY(p,i,len)
+
+#else
+
+    // Hx [i] = t
+    #define GB_HX_WRITE(i,t) Hx [i] = t
+
+    // Cx [p] = Hx [i]
+    #define GB_CIJ_GATHER(p,i) Cx [p] = Hx [i]
+
+    // Hx [i] += t
+    #define GB_HX_UPDATE(i,t) \
+        Hx [i] *= t
+
+    // memcpy (&(Cx [p]), &(Hx [i]), len)
+    #define GB_CIJ_MEMCPY(p,i,len) \
+        memcpy (Cx +(p), Hx +(i), (len) * sizeof(double))
+
+#endif
+
+// disable this semiring and use the generic case if these conditions hold
+#define GB_DISABLE \
+    (GxB_NO_TIMES || GxB_NO_MAX || GxB_NO_FP64 || GxB_NO_TIMES_FP64 || GxB_NO_MAX_FP64 || GxB_NO_TIMES_MAX_FP64)
+
+//------------------------------------------------------------------------------
+// C=A'*B or C<!M>=A'*B: dot product (phase 2)
+//------------------------------------------------------------------------------
+
+GrB_Info GB_Adot2B__times_max_fp64
 (
     GrB_Matrix C,
-    const GrB_Matrix M,
-    const GrB_Matrix A,
-    const GrB_Matrix B,
-    bool flipxy,                // if true, A and B have been swapped
-    GB_Sauna Sauna,             // sparse accumulator
-    GB_Context Context
+    const GrB_Matrix M, const bool Mask_struct,
+    const GrB_Matrix *Aslice, bool A_is_pattern,
+    const GrB_Matrix B, bool B_is_pattern,
+    int64_t *GB_RESTRICT B_slice,
+    int64_t *GB_RESTRICT *C_counts,
+    int nthreads, int naslice, int nbslice
 )
 { 
-
-    double *restrict Sauna_Work = Sauna->Sauna_Work ;  // size C->vlen*zsize
-    double *restrict Cx = C->x ;
-    GrB_Info info = GrB_SUCCESS ;
-
-    #include "GB_AxB_Gustavson_flipxy.c"
-
-    return (info) ;
+    // C<M>=A'*B now uses dot3
+    #if GB_DISABLE
+    return (GrB_NO_VALUE) ;
+    #else
+    #define GB_PHASE_2_OF_2
+    #include "GB_AxB_dot2_meta.c"
+    #undef GB_PHASE_2_OF_2
+    return (GrB_SUCCESS) ;
+    #endif
 }
 
 //------------------------------------------------------------------------------
-// C<M>=A'*B or C=A'*B: dot product
+// C<M>=A'*B: masked dot product method (phase 2)
 //------------------------------------------------------------------------------
 
-// get A(k,i)
-#define GB_DOT_GETA(pA)                                 \
-    GB_atype aki = Ax [pA] ;
-
-// get B(k,j)
-#define GB_DOT_GETB(pB)                                 \
-    GB_btype bkj = Bx [pB] ;
-
-// t = aki*bkj
-#define GB_DOT_MULT(bkj)                                \
-    double t ;                                        \
-    GB_MULTIPLY (t, aki, bkj) ;
-
-// cij += t
-#define GB_DOT_ADD                                      \
-    cij *= t ;
-
-// cij = t
-#define GB_DOT_COPY                                     \
-    cij = t ;
-
-// cij is not a pointer but a scalar; nothing to do
-#define GB_DOT_REACQUIRE ;
-
-// clear cij
-#define GB_DOT_CLEAR                                    \
-    cij = 1 ;
-
-// save the value of C(i,j)
-#define GB_DOT_SAVE                                     \
-    Cx [cnz] = cij ;
-
-#define GB_DOT_WORK_TYPE \
-    GB_btype
-
-#define GB_DOT_WORK(k) Work [k]
-
-// Work [k] = Bx [pB]
-#define GB_DOT_SCATTER \
-    Work [k] = Bx [pB] ;
-
-GrB_Info GB_AdotB__times_max_fp64
+GrB_Info GB_Adot3B__times_max_fp64
 (
-    GrB_Matrix *Chandle,
-    const GrB_Matrix M,
-    const GrB_Matrix A,
-    const GrB_Matrix B,
-    bool flipxy,                  // if true, A and B have been swapped
-    GB_Context Context
+    GrB_Matrix C,
+    const GrB_Matrix M, const bool Mask_struct,
+    const GrB_Matrix A, bool A_is_pattern,
+    const GrB_Matrix B, bool B_is_pattern,
+    const GB_task_struct *GB_RESTRICT TaskList,
+    const int ntasks,
+    const int nthreads
 )
 { 
-
-    GrB_Matrix C = (*Chandle) ;
-    double *restrict Cx = C->x ;
-    double cij ;
-    GrB_Info info = GrB_SUCCESS ;
-    size_t bkj_size = B->type->size ;       // no typecasting here
-
-    #include "GB_AxB_dot_flipxy.c"
-
-    return (info) ;
+    #if GB_DISABLE
+    return (GrB_NO_VALUE) ;
+    #else
+    #include "GB_AxB_dot3_template.c"
+    return (GrB_SUCCESS) ;
+    #endif
 }
 
 //------------------------------------------------------------------------------
-// C<M>=A*B and C=A*B: heap saxpy-based method
+// C+=A'*B: dense dot product
 //------------------------------------------------------------------------------
 
-#define GB_CIJ_GETB(pB)                                \
-    GB_btype bkj = Bx [pB] ;
-
-// C(i,j) = A(i,k) * bkj
-#define GB_CIJ_MULT(pA)                                \
-{                                                      \
-    GB_atype aik = Ax [pA] ;                           \
-    GB_MULTIPLY (cij, aik, bkj) ;                      \
-}
-
-// C(i,j) += A(i,k) * B(k,j)
-#define GB_CIJ_MULTADD(pA,pB)                          \
-{                                                      \
-    GB_atype aik = Ax [pA] ;                           \
-    GB_btype bkj = Bx [pB] ;                           \
-    double t ;                                       \
-    GB_MULTIPLY (t, aik, bkj) ;                        \
-    cij *= t ;                                   \
-}
-
-// cij is not a pointer but a scalar; nothing to do
-#define GB_CIJ_REACQUIRE ;
-
-// cij = identity
-#define GB_CIJ_CLEAR                                   \
-    cij = 1 ;
-
-// save the value of C(i,j)
-#define GB_CIJ_SAVE                                    \
-    Cx [cnz] = cij ;
-
-GrB_Info GB_AheapB__times_max_fp64
+GrB_Info GB_Adot4B__times_max_fp64
 (
-    GrB_Matrix *Chandle,
-    const GrB_Matrix M,
-    const GrB_Matrix A,
-    const GrB_Matrix B,
-    bool flipxy,                  // if true, A and B have been swapped
-    int64_t *restrict List,
-    GB_pointer_pair *restrict pA_pair,
-    GB_Element *restrict Heap,
-    const int64_t bjnz_max,
-    GB_Context Context
+    GrB_Matrix C,
+    const GrB_Matrix A, bool A_is_pattern,
+    int64_t *GB_RESTRICT A_slice, int naslice,
+    const GrB_Matrix B, bool B_is_pattern,
+    int64_t *GB_RESTRICT B_slice, int nbslice,
+    const int nthreads
 )
 { 
-
-    GrB_Matrix C = (*Chandle) ;
-    double *restrict Cx = C->x ;
-    double cij ;
-    int64_t cvlen = C->vlen ;
-    GrB_Info info = GrB_SUCCESS ;
-    GB_CIJ_CLEAR ;
-
-    #include "GB_AxB_heap_flipxy.c"
-
-    return (info) ;
+    #if GB_DISABLE
+    return (GrB_NO_VALUE) ;
+    #else
+    #include "GB_AxB_dot4_template.c"
+    return (GrB_SUCCESS) ;
+    #endif
 }
 
 //------------------------------------------------------------------------------
-// clear macro definitions
+// C=A*B, C<M>=A*B, C<!M>=A*B: saxpy3 method (Gustavson + Hash)
 //------------------------------------------------------------------------------
 
-#undef GB_XTYPE
-#undef GB_YTYPE
-#undef GB_HANDLE_FLIPXY
-#undef GB_MULTOP
-#undef GB_IDENTITY
-#undef GB_COPY_SCALAR_TO_ARRAY
-#undef GB_COPY_ARRAY_TO_SCALAR
-#undef GB_COPY_ARRAY_TO_ARRAY
-#undef GB_MULTADD_NOMASK
-#undef GB_MULTADD_WITH_MASK
-#undef GB_DOT_GETA
-#undef GB_DOT_GETB
-#undef GB_DOT_MULT
-#undef GB_DOT_ADD
-#undef GB_DOT_COPY
-#undef GB_DOT_REACQUIRE
-#undef GB_DOT_CLEAR
-#undef GB_DOT_SAVE
-#undef GB_DOT_WORK_TYPE
-#undef GB_DOT_WORK
-#undef GB_DOT_SCATTER
-#undef GB_CIJ_GETB
-#undef GB_CIJ_MULT
-#undef GB_CIJ_MULTADD
-#undef GB_CIJ_REACQUIRE
-#undef GB_CIJ_CLEAR
-#undef GB_CIJ_SAVE
-#undef GB_MULTIPLY
+#include "GB_AxB_saxpy3_template.h"
+
+GrB_Info GB_Asaxpy3B__times_max_fp64
+(
+    GrB_Matrix C,
+    const GrB_Matrix M, bool Mask_comp, const bool Mask_struct,
+    const GrB_Matrix A, bool A_is_pattern,
+    const GrB_Matrix B, bool B_is_pattern,
+    GB_saxpy3task_struct *GB_RESTRICT TaskList,
+    const int ntasks,
+    const int nfine,
+    const int nthreads,
+    GB_Context Context
+)
+{ 
+    #if GB_DISABLE
+    return (GrB_NO_VALUE) ;
+    #else
+    #include "GB_AxB_saxpy3_template.c"
+    return (GrB_SUCCESS) ;
+    #endif
+}
 
 #endif
 

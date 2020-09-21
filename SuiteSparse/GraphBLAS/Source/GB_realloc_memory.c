@@ -1,13 +1,13 @@
 //------------------------------------------------------------------------------
-// GB_realloc_memory: wrapper for realloc
+// GB_realloc_memory: wrapper for realloc_function
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 // http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
 
-// A wrapper for realloc
+// A wrapper for realloc_function.
 
 // If p is non-NULL on input, it points to a previously allocated object of
 // size nitems_old * size_of_item.  The object is reallocated to be of size
@@ -17,22 +17,23 @@
 // pointer to the old (unmodified) object is returned.
 
 // Usage:
-//
+
 //      p = GB_realloc_memory (nnew, nold, size, p, &ok)
+
 //      if (ok)
+
 //          p points to a space of size at least nnew*size, and the first
 //          part, of size min(nnew,nold)*size, has the same content as
 //          the old memory space if it was present.
+
 //      else
+
 //          p points to the old space of size nold*size, which is left
 //          unchanged.  This case never occurs if nnew < nold.
 
-// By default, GB_REALLOC is defined in GB.h as realloc.  For a MATLAB
-// mexFunction, it is mxRealloc.  It can also be defined at compile time with
-// -DGB_REALLOC=myreallocfunc.
-
 #include "GB.h"
 
+GB_PUBLIC   // accessed by the MATLAB tests in GraphBLAS/Test only
 void *GB_realloc_memory     // pointer to reallocated block of memory, or
                             // to original block if the reallocation failed.
 (
@@ -44,7 +45,7 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
 )
 {
 
-    size_t size ;
+    size_t size, oldsize ;
 
     // make sure at least one item is allocated
     nitems_old = GB_IMAX (1, nitems_old) ;
@@ -53,8 +54,10 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
     // make sure at least one byte is allocated
     size_of_item = GB_IMAX (1, size_of_item) ;
 
-    (*ok) = GB_size_t_multiply (&size, nitems_new, size_of_item) ;
-    if (!(*ok) || nitems_new > GB_INDEX_MAX || size_of_item > GB_INDEX_MAX)
+    (*ok) = GB_size_t_multiply (&size,    nitems_new, size_of_item)
+         && GB_size_t_multiply (&oldsize, nitems_old, size_of_item) ;
+
+    if (!(*ok) || nitems_new > GxB_INDEX_MAX || size_of_item > GxB_INDEX_MAX)
     { 
         // overflow
         (*ok) = false ;
@@ -62,7 +65,7 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
     else if (p == NULL)
     { 
         // a fresh object is being allocated
-        GB_MALLOC_MEMORY (p, nitems_new, size_of_item) ;
+        p = (void *) GB_malloc_memory (nitems_new, size_of_item) ;
         (*ok) = (p != NULL) ;
     }
     else if (nitems_old == nitems_new)
@@ -74,28 +77,72 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
     { 
         // change the size of the object from nitems_old to nitems_new
         void *pnew ;
+        
+        //----------------------------------------------------------------------
+        // for memory usage testing only
+        //----------------------------------------------------------------------
 
-        #ifdef GB_MALLOC_TRACKING
         bool pretend_to_fail = false ;
-        if (GB_Global.malloc_debug)
-        {
-            // brutal malloc debug; pretend to fail if the count <= 0
-            pretend_to_fail = (GB_Global.malloc_debug_count-- <= 0) ;
+        if (GB_Global_malloc_tracking_get ( ))
+        { 
+            // brutal memory debug; pretend to fail if (count-- <= 0).
+            if (GB_Global_malloc_debug_get ( ))
+            {
+                pretend_to_fail = GB_Global_malloc_debug_count_decrement ( ) ;
+            }
         }
+
+        //----------------------------------------------------------------------
+        // reallocate the memory
+        //----------------------------------------------------------------------
+
         if (pretend_to_fail)
-        {
-            // brutal malloc debug; pretend to fail if the count <= 0,
-            #ifdef GB_PRINT_MALLOC
-            printf ("pretend to fail: realloc\n") ;
-            #endif
+        { 
             pnew = NULL ;
         }
         else
-        #endif
-        {
-            // realloc the space
-            pnew = (void *) GB_REALLOC (p, size) ;
+        { 
+
+            //------------------------------------------------------------------
+            // reallocate the space
+            //------------------------------------------------------------------
+
+            if (GB_Global_have_realloc_function ( ))
+            {
+
+                //--------------------------------------------------------------
+                // use realloc
+                //--------------------------------------------------------------
+
+                pnew = (void *) GB_Global_realloc_function (p, size) ;
+
+            }
+            else
+            {
+
+                //--------------------------------------------------------------
+                // no realloc function: mimic with malloc and memcpy
+                //--------------------------------------------------------------
+
+                // malloc the new space
+                pnew = (void *) GB_Global_malloc_function (size) ;
+
+                // copy over the data from the old space to the new space
+                if (pnew != NULL)
+                {
+                    // TODO for GPU: use a parallel memcpy
+                    memcpy (pnew, p, GB_IMIN (oldsize, size)) ;
+                }
+
+                // free the old space
+                GB_Global_free_function (p) ;
+            }
         }
+
+
+        //----------------------------------------------------------------------
+        // check if successful
+        //----------------------------------------------------------------------
 
         if (pnew == NULL)
         {
@@ -104,12 +151,9 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
                 // the attempt to reduce the size of the block failed, but
                 // the old block is unchanged.  So pretend to succeed.
                 (*ok) = true ;
-                #ifdef GB_MALLOC_TRACKING
-                GB_Global.inuse -= (nitems_old - nitems_new) * size_of_item;
-                #endif
             }
             else
-            {
+            { 
                 // out of memory
                 (*ok) = false ;
             }
@@ -119,20 +163,7 @@ void *GB_realloc_memory     // pointer to reallocated block of memory, or
             // success
             p = pnew ;
             (*ok) = true ;
-            #ifdef GB_MALLOC_TRACKING
-            GB_Global.inuse += (nitems_new - nitems_old) * size_of_item ;
-            GB_Global.maxused = GB_IMAX (GB_Global.maxused, GB_Global.inuse) ;
-            #endif
         }
-
-        #ifdef GB_MALLOC_TRACKING
-        #ifdef GB_PRINT_MALLOC
-        printf ("realloc: %14p %3d %1d n "GBd" -> "GBd" size "GBd"\n",
-            pnew, GB_Global.nmalloc, GB_Global.malloc_debug,
-            (int64_t) nitems_old, (int64_t) nitems_new,
-            (int64_t) size_of_item) ;
-        #endif
-        #endif
 
     }
     return (p) ;

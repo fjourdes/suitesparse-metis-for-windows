@@ -1,25 +1,36 @@
 //------------------------------------------------------------------------------
-// GB_apply_op:  apply a unary operator to an array
+// GB_apply_op: typecast and apply a unary operator to an array
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 // http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
 
 // Cx = op ((xtype) Ax)
 
+// Cx and Ax may be aliased.
 // Compare with GB_transpose_op.c
 
-#include "GB.h"
+#include "GB_apply.h"
+#include "GB_binop.h"
+#include "GB_unused.h"
+#ifndef GBCOMPACT
+#include "GB_unop__include.h"
+#include "GB_binop__include.h"
+#endif
 
 void GB_apply_op            // apply a unary operator, Cx = op ((xtype) Ax)
 (
-    GB_void *Cx,            // output array, of type op->ztype
-    const GrB_UnaryOp op,   // operator to apply
-    const GB_void *Ax,      // input array, of type atype
-    const GrB_Type atype,   // type of Ax
-    const int64_t anz       // size of Ax and Cx
+    GB_void *Cx,                    // output array, of type op->ztype
+        const GrB_UnaryOp op1,          // unary operator to apply
+        const GrB_BinaryOp op2,         // binary operator to apply
+        const GxB_Scalar scalar,        // scalar to bind to binary operator
+        bool binop_bind1st,             // if true, binop(x,Ax) else binop(Ax,y)
+    const GB_void *Ax,              // input array, of type Atype
+    const GrB_Type Atype,           // type of Ax
+    const int64_t anz,              // size of Ax and Cx
+    GB_Context Context
 )
 {
 
@@ -30,146 +41,252 @@ void GB_apply_op            // apply a unary operator, Cx = op ((xtype) Ax)
     ASSERT (Cx != NULL) ;
     ASSERT (Ax != NULL) ;
     ASSERT (anz >= 0) ;
-    ASSERT (atype != NULL) ;
-    ASSERT (op != NULL) ;
+    ASSERT (Atype != NULL) ;
+    ASSERT (op1 != NULL || op2 != NULL) ;
 
     //--------------------------------------------------------------------------
-    // define the worker for the switch factory
+    // determine the number of threads to use
     //--------------------------------------------------------------------------
 
-    // Some unary operators z=f(x) do not use the value x, like z=1.  This is
-    // intentional, so the gcc warning is ignored.
-    #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
-
-    // For built-in types only, thus xtype == ztype, but atype can differ
-    #define GB_WORKER(ztype,atype)                              \
-    {                                                           \
-        ztype *cx = (ztype *) Cx ;                              \
-        atype *ax = (atype *) Ax ;                              \
-        for (int64_t p = 0 ; p < anz ; p++)                     \
-        {                                                       \
-            /* x = (ztype) ax [p], type casting */              \
-            ztype x ;                                           \
-            GB_CAST (x, ax [p]) ;                               \
-            /* apply the unary operator */                      \
-            cx [p] = GB_OP (x) ;                                \
-        }                                                       \
-        return ;                                                \
-    }
+    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads = GB_nthreads (anz, chunk, nthreads_max) ;
 
     //--------------------------------------------------------------------------
-    // launch the switch factory
+    // apply the operator
     //--------------------------------------------------------------------------
 
-    // If GB_COMPACT is defined, the switch factory is disabled and all
-    // work is done by the generic worker.  The compiled code will be more
-    // compact, but 3 to 4 times slower.
+    if (op1 != NULL)
+    {
 
-    #ifndef GBCOMPACT
+        //----------------------------------------------------------------------
+        // built-in unary operator
+        //----------------------------------------------------------------------
 
-        // switch factory for two types, controlled by code1 and code2
-        GB_Type_code code1 = op->ztype->code ;      // defines ztype
-        GB_Type_code code2 = atype->code ;          // defines atype
+        GrB_UnaryOp op = op1 ;
 
-        ASSERT (code1 <= GB_UDT_code) ;
-        ASSERT (code2 <= GB_UDT_code) ;
+        #ifndef GBCOMPACT
+        bool no_typecasting = (Atype == op->xtype)
+            || (op->opcode == GB_IDENTITY_opcode)
+            || (op->opcode == GB_ONE_opcode) ;
 
-        // GB_BOP(x) is for boolean x, GB_IOP(x) for integer (int* and uint*),
-        // and GB_FOP(x) is for floating-point
+        if (no_typecasting)
+        { 
 
-        // NOTE: some of these operators z=f(x) do not depend on x, like z=1.
-        // x is read anyway, but the compiler can remove that as dead code if
-        // it is able to.  gcc with -Wunused-but-set-variable will complain,
-        // but there's no simple way to silence this spurious warning.
-        // Ignore it.
+            // only two workers are allowed to do their own typecasting from
+            // the Atype to the xtype of the operator: IDENTITY and ONE.  For
+            // all others, the input type Atype must match the op->xtype of the
+            // operator.  If this check isn't done, abs.fp32 with fc32 input
+            // will map to abs.fc32, based on the type of the input Ax, which is
+            // the wrong operator.
 
-        switch (op->opcode)
-        {
+            //------------------------------------------------------------------
+            // define the worker for the switch factory
+            //------------------------------------------------------------------
 
-            case GB_ONE_opcode :       // z = 1
+            #define GB_unop_apply(op,zname,aname) \
+                GB_unop_apply_ ## op ## zname ## aname
 
-                #define GB_BOP(x) true
-                #define GB_IOP(x) 1
-                #define GB_FOP(x) 1
-                #include "GB_2type_template.c"
-                break ;
+            #define GB_WORKER(op,zname,ztype,aname,atype)               \
+            {                                                           \
+                GrB_Info info = GB_unop_apply (op,zname,aname)          \
+                    ((ztype *) Cx, (const atype *) Ax, anz, nthreads) ; \
+                if (info == GrB_SUCCESS) return ;                       \
+            }                                                           \
+            break ;
 
-            case GB_IDENTITY_opcode :  // z = x
+            //------------------------------------------------------------------
+            // launch the switch factory
+            //------------------------------------------------------------------
 
-                // Do not create workers when the two codes are the same,
-                // C is a pure shallow copy of A, and the function has already
-                // returned the result C.
-                #define GB_NOT_SAME
-                #define GB_BOP(x) x
-                #define GB_IOP(x) x
-                #define GB_FOP(x) x
-                #include "GB_2type_template.c"
-                break ;
+            #include "GB_unop_factory.c"
+        }
+        #endif
 
-            case GB_AINV_opcode :      // z = -x
+        //----------------------------------------------------------------------
+        // generic worker: typecast and apply a unary operator
+        //----------------------------------------------------------------------
 
-                #define GB_BOP(x)  x
-                #define GB_IOP(x) -x
-                #define GB_FOP(x) -x
-                #include "GB_2type_template.c"
-                break ;
+        GB_BURBLE_N (anz, "generic ") ;
 
-            case GB_ABS_opcode :       // z = abs(x)
+        size_t asize = Atype->size ;
+        size_t zsize = op->ztype->size ;
+        size_t xsize = op->xtype->size ;
+        GB_cast_function
+            cast_A_to_X = GB_cast_factory (op->xtype->code, Atype->code) ;
+        GxB_unary_function fop = op->function ;
 
-                #define GB_BOP(x)  x
-                #define GB_IOP(x)  GB_IABS(x)
-                #define GB_FOP(x)  GB_FABS(x)
-                #include "GB_2type_template.c"
-                break ;
-
-            case GB_MINV_opcode :      // z = 1/x
-
-                // see Source/GB.h discussion on boolean and integer division
-                #define GB_BOP(x) true
-                #define GB_IOP(x) GB_IMINV(x)
-                #define GB_FOP(x) 1./x
-                #include "GB_2type_template.c"
-                break ;
-
-            case GB_LNOT_opcode :      // z = ! (x != 0)
-
-                #define GB_BOP(x) !x
-                #define GB_IOP(x) (!(x != 0))
-                #define GB_FOP(x) (!(x != 0))
-                #include "GB_2type_template.c"
-                break ;
-
-            default: ;
+        int64_t p ;
+        #pragma omp parallel for num_threads(nthreads) schedule(static)
+        for (p = 0 ; p < anz ; p++)
+        { 
+            // xwork = (xtype) Ax [p]
+            GB_void xwork [GB_VLA(xsize)] ;
+            cast_A_to_X (xwork, Ax +(p*asize), asize) ;
+            // Cx [p] = fop (xwork)
+            fop (Cx +(p*zsize), xwork) ;
         }
 
-    #endif
+    }
+    else
+    {
 
-    // If the switch factory has no worker for the opcode or type, then it
-    // falls through to the generic worker below.
+        //----------------------------------------------------------------------
+        // built-in binary operator
+        //----------------------------------------------------------------------
 
-    //--------------------------------------------------------------------------
-    // generic worker:  apply an operator, with optional typecasting
-    //--------------------------------------------------------------------------
+        GB_Opcode opcode = op2->opcode ;
+        GB_Type_code xcode, ycode, zcode ;
+        bool op_is_first  = opcode == GB_FIRST_opcode ;
+        bool op_is_second = opcode == GB_SECOND_opcode ;
+        bool op_is_pair   = opcode == GB_PAIR_opcode ;
 
-    // The generic worker can handle any operator and any type, and it does all
-    // required typecasting.  Thus the switch factory can be disabled, and the
-    // code will more compact and still work.  It will just be slower.
+        size_t asize = Atype->size ;
+        size_t ssize = scalar->type->size ;
+        size_t zsize = op2->ztype->size ;
+        size_t xsize = op2->xtype->size ;
+        size_t ysize = op2->ytype->size ;
 
-    int64_t asize = atype->size ;
-    int64_t zsize = op->ztype->size ;
-    GB_cast_function
-        cast_A_to_X = GB_cast_factory (op->xtype->code, atype->code) ;
-    GxB_unary_function fop = op->function ;
+        GB_Type_code scode = scalar->type->code ;
+        xcode = op2->xtype->code ;
+        ycode = op2->ytype->code ;
 
-    // scalar workspace
-    char xwork [op->xtype->size] ;
+        // typecast the scalar to the operator input
+        bool ignore_scalar = false ;
+        size_t ssize_cast ;
+        GB_Type_code scode_cast ;
+        if (binop_bind1st)
+        { 
+            ssize_cast = xsize ;
+            scode_cast = xcode ;
+            ignore_scalar = op_is_second || op_is_pair ;
+        }
+        else
+        { 
+            ssize_cast = ysize ;
+            scode_cast = ycode ;
+            ignore_scalar = op_is_first  || op_is_pair ;
+        }
+        GB_void swork [GB_VLA(ssize_cast)] ;
+        GB_void *scalarx = (GB_void *) scalar->x ;
+        if (scode_cast != scode && !ignore_scalar)
+        { 
+            // typecast the scalar to the operator input, in swork
+            GB_cast_function cast_s = GB_cast_factory (scode_cast, scode) ;
+            cast_s (swork, scalar->x, ssize) ;
+            scalarx = swork ;
+        }
 
-    for (int64_t p = 0 ; p < anz ; p++)
-    { 
-        // xwork = (xtype) Ax [p]
-        cast_A_to_X (xwork, Ax +(p*asize), asize) ;
-        // Cx [p] = fop (xwork)
-        fop (Cx +(p*zsize), xwork) ;
+        #ifndef GBCOMPACT
+        if (binop_bind1st)
+        {
+
+            //------------------------------------------------------------------
+            // z = op(scalar,Ax)
+            //------------------------------------------------------------------
+
+            if (GB_binop_builtin (
+                op2->xtype, ignore_scalar,
+                Atype,      op_is_first  || op_is_pair,
+                op2, false, &opcode, &xcode, &ycode, &zcode))
+            { 
+
+                //--------------------------------------------------------------
+                // define the worker for the switch factory
+                //--------------------------------------------------------------
+
+                #define GB_bind1st(op,xname) GB_bind1st_ ## op ## xname
+
+                #define GB_BINOP_WORKER(op,xname)                       \
+                {                                                       \
+                    if (GB_bind1st (op, xname) (Cx, scalarx, Ax,        \
+                            anz, nthreads) == GrB_SUCCESS) return ;     \
+                }                                                       \
+                break ;
+
+                //--------------------------------------------------------------
+                // launch the switch factory
+                //--------------------------------------------------------------
+
+                #define GB_NO_SECOND
+                #define GB_NO_PAIR
+                #include "GB_binop_factory.c"
+            }
+        }
+        else
+        {
+
+            //------------------------------------------------------------------
+            // z = op(Ax,scalar)
+            //------------------------------------------------------------------
+
+            if (GB_binop_builtin (
+                Atype,      op_is_second || op_is_pair,
+                op2->ytype, ignore_scalar,
+                op2, false, &opcode, &xcode, &ycode, &zcode))
+            { 
+
+                //--------------------------------------------------------------
+                // define the worker for the switch factory
+                //--------------------------------------------------------------
+
+                #define GB_bind2nd(op,xname) GB_bind2nd_ ## op ## xname
+                #undef  GB_BINOP_WORKER
+                #define GB_BINOP_WORKER(op,xname)                       \
+                {                                                       \
+                    if (GB_bind2nd (op, xname) (Cx, Ax, scalarx,        \
+                            anz, nthreads) == GrB_SUCCESS) return ;     \
+                }                                                       \
+                break ;
+
+                //--------------------------------------------------------------
+                // launch the switch factory
+                //--------------------------------------------------------------
+
+                #define GB_NO_FIRST
+                #define GB_NO_PAIR
+                #include "GB_binop_factory.c"
+            }
+        }
+        #endif
+
+        //----------------------------------------------------------------------
+        // generic worker: typecast and apply a binary operator
+        //----------------------------------------------------------------------
+
+        GB_BURBLE_N (anz, "generic ") ;
+        GB_Type_code acode = Atype->code ;
+        GxB_binary_function fop = op2->function ;
+
+        if (binop_bind1st)
+        { 
+            // Cx = op (scalar,Ax)
+            GB_cast_function cast_A_to_Y = GB_cast_factory (ycode, acode) ;
+            int64_t p ;
+            #pragma omp parallel for num_threads(nthreads) schedule(static)
+            for (p = 0 ; p < anz ; p++)
+            {
+                // ywork = (ytype) Ax [p]
+                GB_void ywork [GB_VLA(ysize)] ;
+                cast_A_to_Y (ywork, Ax +(p*asize), asize) ;
+                // Cx [p] = fop (xwork, ywork)
+                fop (Cx +(p*zsize), scalarx, ywork) ;
+            }
+        }
+        else
+        { 
+            // Cx = op (Ax,scalar)
+            GB_cast_function cast_A_to_X = GB_cast_factory (xcode, acode) ;
+            int64_t p ;
+            #pragma omp parallel for num_threads(nthreads) schedule(static)
+            for (p = 0 ; p < anz ; p++)
+            {
+                // xwork = (xtype) Ax [p]
+                GB_void xwork [GB_VLA(xsize)] ;
+                cast_A_to_X (xwork, Ax +(p*asize), asize) ;
+                // Cx [p] = fop (xwork, ywork)
+                fop (Cx +(p*zsize), xwork, scalarx) ;
+            }
+        }
     }
 }
 

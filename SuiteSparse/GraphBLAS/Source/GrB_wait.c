@@ -1,57 +1,27 @@
-//------------------------------------------------------------------------------
-// GrB_wait: finish all pending computations
-//------------------------------------------------------------------------------
-
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
-// http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
-
-//------------------------------------------------------------------------------
-
-// The GrB_wait function forces all pending operations to complete.  Blocking
-// mode is as if the GrB_wait operation is called whenever a GraphBLAS
-// operation returns to the user.
-
-// The non-blocking mode can have side effects if user-defined functions have
-// side effects or if they rely on global variables, which are not under the
-// control of GraphBLAS.  Suppose the user creates a user-defined operator that
-// accesses a global variable.  That operator is then used in a GraphBLAS
-// operation, which is left pending.  If the user then changes the global
-// variable before pending operations complete, the pending operations will be
-// eventually computed with this different value.
-
-// Worse yet, a user-defined operator can be freed before it is needed to
-// finish a pending operation.  To avoid this, call GrB_wait before modifying
-// any global variables relied upon by user-defined operators, or before
-// freeing any user-defined types, operators, monoids, or semirings.
+// GrB_wait ( with no inputs ): DEPRECATED: TODO in 4.0: delete this
+// DEPRECATED: This will be removed in SuiteSparse:GraphBLAS v4.0.
 
 #include "GB.h"
 
-GrB_Info GrB_wait ( )       // finish all pending computations
+#define GB_FREE_ALL ;
+
+#if defined (USER_POSIX_THREADS)
+pthread_mutex_t GB_sync ;
+#endif
+
+GrB_Info GrB_wait ( )       // DEPRECATED.  Do *not* use this function.
 {
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    GB_WHERE ("GrB_wait ( )") ;
-
-    //--------------------------------------------------------------------------
-    // assemble all matrices with lingering zombies and/or pending tuples
-    //--------------------------------------------------------------------------
-
+    GrB_Info info ;
+    GB_WHERE ("GrB_wait (with no inputs) DEPRECATED ") ;
+    GB_BURBLE_START ("GrB_wait (DEPRECATED: USE GrB_*_wait(object) instead) ") ;
     GrB_Matrix A = NULL ;
     while (true)
-    { 
-        GB_CRITICAL (GB_queue_remove_head (&A)) ;
+    {
+        if (!GB_queue_remove_head (&A)) GB_PANIC ;
         if (A == NULL) break ;
-        // A has been removed from the head of the queue but it still has
-        // pending operations.  GB_check expects it to be in the queue.
-        // ASSERT_OK (GB_check (A, "to assemble in GrB_wait", GB0)) ;
-        ASSERT (GB_PENDING (A) || GB_ZOMBIES (A)) ;
-        // delete any lingering zombies and assemble any pending tuples.
-        GB_WAIT (A) ;
+        GB_MATRIX_WAIT (A) ;
     }
-
+    GB_BURBLE_END ;
     return (GrB_SUCCESS) ;
 }
 

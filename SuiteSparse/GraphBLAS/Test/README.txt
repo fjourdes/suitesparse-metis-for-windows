@@ -1,4 +1,4 @@
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 GraphBLAS/Test:
@@ -14,15 +14,15 @@ function.  None of the GB_mex_*.c mexFunctions have corresponding GB_mex_*.m
 files to provide 'help GB_mex...' documentation.
 
 Requirements:  the mex command must use a C compiler supporting ANSI C11.
+Microft Visual Studio does not support ANSI C11 so this test is not available
+on Windows unless you use another compiler.
 
-To run the tests you must first compile "spok":
+To run the tests, use the following command in this directory, in MATLAB:
 
-    cd spok
-    spok_install
+    make ; testall
 
-Next, in this directory, to compile and run all the tests (about 10 minutes):
-
-    gbmake ; testall
+If you get a linking problem on linux, add this directory to your
+LD_LIBRARY_PATH, so that the libgraphblas.so can be found by the mexFunctions.
 
 Longer tests can be done as well (this can take a whole day):
 
@@ -31,23 +31,23 @@ Longer tests can be done as well (this can take a whole day):
 To run with malloc debugging (this will be slower):
 
     debug_on
-    gbmake ; testall
+    make ; testall
 
 To turn off malloc debugging:
 
     debug_off
 
 Malloc debugging is very extensive.  When enabled, the GraphBLAS wrapper
-functions for malloc/calloc/realloc/free (mxMalloc/etc in this MATLAB
-interface) decrement a counter when they are been successful.  When this
+functions for malloc/calloc/realloc/free, which are mxMalloc/etc in this MATLAB
+interface, decrement a counter when they are been successful.  When this
 reaches zero, they pretend to fail, and thus allow the out-of-memory error
 handling in GraphBLAS to be tested.  If the function fails, the counter is
 reset, and the test is done again.  The initial state of this counter is
 increased until the function succeeds.  During this entire process, a count is
 kept of malloc'd blocks, and an error is reported if a leak is found.
-GraphBLAS will be very slow with malloc debugging enabled.  It is only
-done through the MATLAB interface and has no effect when GraphBLAS is
-used through a C program (as in the Demo/ programs).
+GraphBLAS will be very slow with malloc debugging enabled.  It is only done
+through the MATLAB interface and has no effect when GraphBLAS is used through a
+C program (as in the Demo/ programs).
 
 To enable further debugging tests, see the comments in Source/GB.h.
 
@@ -73,7 +73,8 @@ GB_mex.h        include file for the mexFunctions
 Template/*.c    a template file for building two mexFunctions:
                 GB_mex_Matrix_build and GB_mex_Vector_build.
 
-gbmake.m        compiles the MATLAB interface to GraphBLAS
+make.m          compiles the MATLAB interface to GraphBLAS (links with
+                dynamic -lgraphblas)
 
 debug_off.m     turns off malloc debugging
 debug_on.m      turns on malloc debugging; the interface will be *very* slow,

@@ -2,21 +2,21 @@
 // GB_nvec_nonempty: count the number of non-empty vectors
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2018, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
 // http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
 
-// Pending tuples are ignored.  If a vector has all zombies it is still
-// counted as non-empty.  The value computed is normally A->nvec_nonempty,
-// which is checked in GB_matvec_check.  However, when GB_resize needs to
-// recount A->nvec_nonempty, it uses this function.
+// All pending tuples are ignored.  If a vector has all zombies it is still
+// counted as non-empty.
 
 #include "GB.h"
 
+GB_PUBLIC   // accessed by the MATLAB tests in GraphBLAS/Test only
 int64_t GB_nvec_nonempty        // return # of non-empty vectors
 (
-    const GrB_Matrix A          // input matrix to examine
+    const GrB_Matrix A,         // input matrix to examine
+    GB_Context Context
 )
 {
 
@@ -25,6 +25,7 @@ int64_t GB_nvec_nonempty        // return # of non-empty vectors
     //--------------------------------------------------------------------------
 
     ASSERT (A != NULL) ;
+    ASSERT (GB_ZOMBIES_OK (A)) ;
 
     //--------------------------------------------------------------------------
     // trivial case
@@ -36,16 +37,27 @@ int64_t GB_nvec_nonempty        // return # of non-empty vectors
     }
 
     //--------------------------------------------------------------------------
+    // determine the number of threads to use
+    //--------------------------------------------------------------------------
+
+    int64_t anvec = A->nvec ;
+
+    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads = GB_nthreads (anvec, chunk, nthreads_max) ;
+
+    //--------------------------------------------------------------------------
     // count the non-empty columns
     //--------------------------------------------------------------------------
 
     int64_t nvec_nonempty = 0 ;
+    const int64_t *GB_RESTRICT Ap = A->p ;
 
-    GB_for_each_vector (A)
+    int64_t k ;
+    #pragma omp parallel for num_threads(nthreads) schedule(static) \
+            reduction(+:nvec_nonempty)
+    for (k = 0 ; k < anvec ; k++)
     { 
-        int64_t GBI1_initj (Iter, j, p, pend) ;
-        int64_t ajnz = pend - p ;
-        if (ajnz > 0) nvec_nonempty++ ;
+        if (Ap [k] < Ap [k+1]) nvec_nonempty++ ;
     }
 
     ASSERT (nvec_nonempty >= 0 && nvec_nonempty <= A->vdim) ;

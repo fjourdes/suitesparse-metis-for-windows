@@ -2,6 +2,11 @@
 // GraphBLAS/Demo/Program/wildtype_demo: an arbitrary user-defined type
 //------------------------------------------------------------------------------
 
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2020, All Rights Reserved.
+// http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
+
+//------------------------------------------------------------------------------
+
 // Each "scalar" entry of this type consists of a 4x4 matrix and a string of
 // length 64.
 
@@ -11,7 +16,11 @@
 #pragma warning (disable: 58 167 144 177 181 186 188 589 593 869 981 1418 1419 1572 1599 2259 2282 2557 2547 3280 )
 #elif defined __GNUC__
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+#if defined ( __cplusplus )
+#pragma GCC diagnostic ignored "-Wwrite-strings"
+#else
 #pragma GCC diagnostic ignored "-Wincompatible-pointer-types"
+#endif
 #endif
 
 //------------------------------------------------------------------------------
@@ -148,12 +157,83 @@ int main (void)
 
     // start GraphBLAS
     GrB_init (GrB_NONBLOCKING) ;
+    int nthreads ;
+    GxB_Global_Option_get (GxB_GLOBAL_NTHREADS, &nthreads) ;
+    fprintf (stderr, "wildtype demo: nthreads %d\n", nthreads) ;
 
+    /* alternative method via #defines:
     fprintf (stderr, LINE2 "SuiteSparse:GraphBLAS Version %d.%d.%d, %s\n" LINE2
         "%s" LINE "License: %s" LINE "GraphBLAS API Version %d.%d.%d, %s"
         " (http://graphblas.org)\n%s" LINE2, GxB_IMPLEMENTATION_MAJOR,
-        GxB_IMPLEMENTATION_MINOR, GxB_IMPLEMENTATION_SUB, GxB_DATE, GxB_ABOUT,
-        GxB_LICENSE, GxB_MAJOR, GxB_MINOR, GxB_SUB, GxB_SPEC_DATE, GxB_SPEC) ;
+        GxB_IMPLEMENTATION_MINOR, GxB_IMPLEMENTATION_SUB,
+        GxB_IMPLEMENTATION_DATE,  GxB_IMPLEMENTATION_ABOUT,
+        GxB_IMPLEMENTATION_LICENSE, GxB_SPEC_MAJOR, GxB_SPEC_MINOR,
+        GxB_SPEC_SUB, GxB_SPEC_DATE, GxB_SPEC_ABOUT) ;
+    */
+
+    char *library ;   GxB_Global_Option_get (GxB_LIBRARY_NAME,     &library) ;
+    int version [3] ; GxB_Global_Option_get (GxB_LIBRARY_VERSION,  version) ;
+    char *date ;      GxB_Global_Option_get (GxB_LIBRARY_DATE,     &date) ;
+    char *about ;     GxB_Global_Option_get (GxB_LIBRARY_ABOUT,    &about) ;
+    char *url ;       GxB_Global_Option_get (GxB_LIBRARY_URL,      &url) ;
+    char *license ;   GxB_Global_Option_get (GxB_LIBRARY_LICENSE,  &license) ;
+    char *cdate ;     GxB_Global_Option_get (GxB_LIBRARY_COMPILE_DATE, &cdate) ;
+    char *ctime ;     GxB_Global_Option_get (GxB_LIBRARY_COMPILE_TIME, &ctime) ;
+    int api_ver [3] ; GxB_Global_Option_get (GxB_API_VERSION,      api_ver) ;
+    char *api_date ;  GxB_Global_Option_get (GxB_API_DATE,         &api_date) ;
+    char *api_about ; GxB_Global_Option_get (GxB_API_ABOUT,        &api_about) ;
+    char *api_url ;   GxB_Global_Option_get (GxB_API_URL,          &api_url) ;
+
+    fprintf (stderr, LINE2 "%s Version %d.%d.%d, %s\n" LINE2 "%s"
+        "(%s)\n" LINE "License: %s" LINE "GraphBLAS API Version %d.%d.%d, %s"
+        " (%s)\n%s" LINE2,
+        library, version [0], version [1], version [2], date, about, url,
+        license, api_ver [0], api_ver [1], api_ver [2], api_date, api_url,
+        api_about) ;
+    fprintf (stderr, "compiled: %s %s\n", cdate, ctime) ;
+
+    double hyper_ratio ;
+    GxB_Global_Option_get (GxB_HYPER, &hyper_ratio) ;
+    fprintf (stderr, "hyper ratio: %g\n", hyper_ratio) ;
+
+    GxB_Format_Value format ;
+    GxB_Global_Option_get (GxB_FORMAT, &format) ;
+    fprintf (stderr, "format: %s\n", (format == GxB_BY_ROW) ? "CSR" : "CSC") ;
+
+    GrB_Mode mode ;
+    GxB_Global_Option_get (GxB_MODE, &mode) ;
+    fprintf (stderr, "mode: %s\n", (mode == GrB_BLOCKING) ?
+        "blocking" : "non-blocking") ;
+
+    GxB_Thread_Model thread_safety ;
+    GxB_Global_Option_get (GxB_THREAD_SAFETY, &thread_safety) ;
+    fprintf (stderr, "user thread safety via: ") ;
+    switch (thread_safety)
+    {
+        case GxB_THREAD_OPENMP :  fprintf (stderr, "OpenMP\n") ;         break ;
+        case GxB_THREAD_POSIX :   fprintf (stderr, "POSIX threads\n") ;  break ;
+        case GxB_THREAD_WINDOWS : fprintf (stderr, "Windowsthreads\n") ; break ;
+        case GxB_THREAD_ANSI :    fprintf (stderr, "ANSI threads\n") ;   break ;
+        case GxB_THREAD_NONE : 
+        default :                 fprintf (stderr, "none\n") ;
+    }
+
+    GxB_Thread_Model threading ;
+    GxB_Global_Option_get (GxB_THREADING, &threading) ;
+    fprintf (stderr, "GraphBLAS parallelism via: ") ;
+    switch (threading)
+    {
+        case GxB_THREAD_OPENMP :  fprintf (stderr, "OpenMP\n") ; break ;
+        case GxB_THREAD_POSIX :   
+        case GxB_THREAD_WINDOWS : 
+        case GxB_THREAD_ANSI :    
+        case GxB_THREAD_NONE : 
+        default :                 fprintf (stderr, "none\n") ;
+    }
+
+    int nthreads_max ;
+    GxB_Global_Option_get (GxB_GLOBAL_NTHREADS, &nthreads_max) ;
+    fprintf (stderr, "max # of threads used internally: %d\n", nthreads_max) ;
 
     // create the WildType
     GrB_Type_new (&WildType, sizeof (wildtype)) ;
@@ -162,7 +242,7 @@ int main (void)
     size_t s ;
     GxB_Type_size (&s, WildType) ;
     printf ("WildType size: %d\n", (int) s) ;
-    GxB_print (WildType, GxB_COMPLETE) ;
+    GxB_Type_fprint (WildType, "WildType", GxB_COMPLETE, stdout) ;
 
     // create a 10-by-10 WildType matrix, each entry is a 'scalar' WildType
     GrB_Matrix A ;
@@ -208,11 +288,13 @@ int main (void)
 
     // create the WildAdd operator
     GrB_BinaryOp WildAdd ;
-    GrB_BinaryOp_new (&WildAdd, wildtype_add, WildType, WildType, WildType) ;
+    GrB_BinaryOp_new (&WildAdd, 
+        (GxB_binary_function) wildtype_add, WildType, WildType, WildType) ;
 
     // create the WildMult operator
     GrB_BinaryOp WildMult ;
-    GrB_BinaryOp_new (&WildMult, wildtype_mult, WildType, WildType, WildType) ;
+    GrB_BinaryOp_new (&WildMult, 
+        (GxB_binary_function) wildtype_mult, WildType, WildType, WildType) ;
 
     // create a matrix B with B (7,2) = scalar2
     GrB_Matrix B ;
@@ -257,7 +339,7 @@ int main (void)
     // create and print the InTheWild semiring
     GrB_Semiring InTheWild ;
     GrB_Semiring_new (&InTheWild, WildAdder, WildMult) ;
-    GxB_print (InTheWild, GxB_COMPLETE) ;
+    GxB_Semiring_fprint (InTheWild, "InTheWild", GxB_COMPLETE, stdout) ;
 
     printf ("\nmultiplication C=A*B InTheWild semiring:\n") ;
 
@@ -273,7 +355,7 @@ int main (void)
     wildtype_print_matrix (C, "output C") ;
 
     // set C to column-oriented format
-    GxB_set (C, GxB_FORMAT, GxB_BY_COL) ;
+    GxB_Matrix_Option_set (C, GxB_FORMAT, GxB_BY_COL) ;
     printf ("\nC is now stored by column, but it looks just the same to the\n"
             "GraphBLAS user application.  The difference is opaque, in the\n"
             "internal data structure.\n") ;
@@ -285,23 +367,23 @@ int main (void)
     wildtype_print_matrix (D, "D") ;
 
     // do something invalid
-    info = GrB_eWiseAdd (C, NULL, NULL, WildAdd, A, D, NULL) ;
+    info = GrB_Matrix_eWiseAdd_BinaryOp (C, NULL, NULL, WildAdd, A, D, NULL) ;
     if (info != GrB_SUCCESS)
     {
-        printf ("\nThis supposed to fail, as a demo of GrB_error:\n%s\n",
+        printf ("\nThis is supposed to fail, as a demo of GrB_error:\n%s\n",
             GrB_error ( )) ;
     }
 
     // free everyting
-    GrB_free (&C) ;
-    GrB_free (&A) ;
-    GrB_free (&B) ;
-    GrB_free (&D) ;
-    GrB_free (&InTheWild) ;
-    GrB_free (&WildAdder) ;
-    GrB_free (&WildAdd) ;
-    GrB_free (&WildMult) ;
-    GrB_free (&WildType) ;
+    GrB_Matrix_free (&C) ;
+    GrB_Matrix_free (&A) ;
+    GrB_Matrix_free (&B) ;
+    GrB_Matrix_free (&D) ;
+    GrB_Semiring_free (&InTheWild) ;
+    GrB_Monoid_free (&WildAdder) ;
+    GrB_BinaryOp_free (&WildAdd) ;
+    GrB_BinaryOp_free (&WildMult) ;
+    GrB_Type_free (&WildType) ;
 
     GrB_finalize ( ) ;
 }
