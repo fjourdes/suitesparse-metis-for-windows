@@ -6,19 +6,7 @@
 # Updated by NeroBurner (pyro4hell@gmail.com) 2019-04-11
 # -----------------------------------------------
 
-# Hunter stuff must be included before project()
-if (WIN32)
-  set(HUNTER_ENABLED_DEFAULT ON)
-else()
-  set(HUNTER_ENABLED_DEFAULT OFF)
-endif()
-option(HUNTER_ENABLED "Enable Hunter package manager support" ${HUNTER_ENABLED_DEFAULT})
-include("../../cmake/HunterGate.cmake")
-HunterGate(
-    URL "https://github.com/cpp-pm/hunter/archive/v0.23.244.tar.gz"
-    SHA1 "2c0f491fd0b80f7b09e3d21adb97237161ef9835"
-)
-project(CholmodExample C)
+project(CholmodExample)
 
 cmake_minimum_required(VERSION 3.1)
 
@@ -45,7 +33,7 @@ endif()
 # for example use the following command line
 # cmake -S . -B _build -DSuiteSparse_DIR=../../_install/lib/cmake/suitesparse-5.1.0
 # ------------------------------------------------------------------
-hunter_add_package(SuiteSparse)
+
 find_package(SuiteSparse CONFIG REQUIRED)
 # ------------------------------------------------------------------
 #   End of SuiteSparse detection
